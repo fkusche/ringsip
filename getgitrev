@@ -1,0 +1,14 @@
+#!/bin/bash
+
+GS=$(git status --untracked-files=no --porcelain 2>/dev/null)
+if [[ $? != 0 ]]; then
+    echo "not git"
+    exit 0
+fi
+
+if [[ -z "$GS" ]] ; then
+    echo "`git rev-parse --short HEAD` (clean)"
+else
+    echo "`git rev-parse --short HEAD` (dirty)"
+fi
+
