@@ -29,7 +29,7 @@ Currently, only Debian Jessie is tested.
 
 In order to build, do the following:
 
-    apt-get install libpjproject-dev
+    sudo apt-get install libpjproject-dev libsrtp-dev
     make
 
 `make install` will copy the executable to `/opt/ringsip/bin`, but you can copy it wherever you want.
