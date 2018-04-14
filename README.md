@@ -25,7 +25,7 @@ Rings a phone via SIP (e.g. FRITZ!Box)
 
 ## Building
 
-Currently, only Debian Jessie is tested.
+Currently, only Debian Jessie and Stretch are tested.
 
 In order to build, do the following:
 
