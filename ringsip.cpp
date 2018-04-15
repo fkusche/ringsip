@@ -263,7 +263,7 @@ int main(int argc, char *argv[])
 	cfg.reg_uri = pj_str( reg_uri );
 	cfg.cred_count = 1;
 	cfg.cred_info[0].realm = pj_str(const_cast<char*>( "*" ));
-	cfg.cred_info[0].scheme = pj_str(const_cast<char*>( "disgest" ));
+	cfg.cred_info[0].scheme = pj_str(const_cast<char*>( "digest" ));
 	cfg.cred_info[0].username = pj_str(const_cast<char*>( username ));
 	cfg.cred_info[0].data_type = PJSIP_CRED_DATA_PLAIN_PASSWD;
 	cfg.cred_info[0].data = pj_str(const_cast<char*>( password ));
