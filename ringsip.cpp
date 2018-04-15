@@ -21,11 +21,14 @@
  */
 
 #include <pjsua-lib/pjsua.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <time.h>
 #include <atomic>
 #include <unistd.h>
 #include <signal.h>
 
+#define MAX_PASSWORD    50
 #define THIS_FILE	"APP"
 
 std::atomic<int> g_registerState( 0 );          // 0: not registered yet, -1 registration failed, 1 registration ok
@@ -115,6 +118,7 @@ static void usage( const char* text = nullptr )
                      "registrar:     The IP address or host name of the SIP registrar\n"
                      "username:      User name for login at the registrar\n"
                      "password:      Password for the login\n"
+                     "               If this starts with '/', the password will be read from that file\n"
                      "callee:        Phone number or sip URI to call\n\n"
                      "Options:\n"
                      "--duration n:  Ring for n seconds (default: 5)\n"
@@ -171,6 +175,22 @@ int main(int argc, char *argv[])
     username  = argv[pos+1];
     password  = argv[pos+2];
     callee    = argv[pos+3];
+
+    if( password[0] == '/' ) {
+        int handle = open( password, O_RDONLY );
+        if( handle < 0 ) {
+            fprintf( stderr, "error reading password file %s", password );
+            return 1;
+        }
+        char* buf = new char[MAX_PASSWORD + 2];
+        int n = read( handle, buf, MAX_PASSWORD + 1 );
+        buf[MAX_PASSWORD+1] = 0;
+        // truncate at first non-printable character
+        for( int i = 0; i < n; i++ )
+            if( (unsigned char) buf[i] < 32 )
+                buf[i] = 0;
+        password = buf;
+    }
 
     // do some validation
     if( name && strlen( name ) > 100 )
