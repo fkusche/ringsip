@@ -21,15 +21,15 @@
  */
 
 #include <pjsua-lib/pjsua.h>
-#include <unistd.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <time.h>
 #include <atomic>
 #include <unistd.h>
 #include <signal.h>
 
-#define MAX_PASSWORD    50
 #define THIS_FILE	"APP"
+#define MAX_PASSWORD    50
 
 std::atomic<int> g_registerState( 0 );          // 0: not registered yet, -1 registration failed, 1 registration ok
 std::atomic<bool> g_stop( false );              // true: signal (HUP, INT, ...) received
@@ -99,6 +99,7 @@ static void on_reg_state2(pjsua_acc_id acc_id, pjsua_reg_info *info)
 /* Display error and exit application */
 static void error_exit(const char *title, pj_status_t status)
 {
+    fprintf( stderr, "\n%s\n", title );
     pjsua_perror(THIS_FILE, title, status);
     pjsua_destroy();
     exit(1);
@@ -107,6 +108,7 @@ static void error_exit(const char *title, pj_status_t status)
 static void signalHandler( int signal )
 {
     PJ_LOG( 1, (THIS_FILE, "Signal %d received.", signal ));
+
     g_stop.store( true );
 }
 
@@ -123,6 +125,8 @@ static void usage( const char* text = nullptr )
                      "Options:\n"
                      "--duration n:  Ring for n seconds (default: 5)\n"
                      "--name str:    Use str as caller name\n"
+                     "--daemon:      Daemonize, in order to actually ring, send SIGUSR1\n"
+                     "               e.g. with \"killall -SIGUSR1 ringsip\""
                      "-v, -vv, -vvv: Little to medium verbosity\n"
                      "-vvvv:         Also show SIP messages\n"
                      "-vvvvv, ...:   Be very verbose\n\n"
@@ -132,6 +136,28 @@ static void usage( const char* text = nullptr )
                      "ringsip 192.168.0.1 620 secret sip:pete@host.com\n",
                      text ? "Error: " : "", text ? text : "", text ? "\n\n" : "", GITREV );
     exit( 1 );
+}
+
+
+static void ring( pjsua_acc_id acc_id, const char* registrar, const char* callee, int duration )
+{
+    char buf[512];
+
+    if( callee[0] == 's' && callee[1] == 'i' && callee[2] == 'p' && callee[3] == ':' )
+        strcpy( buf, callee );
+    else
+        sprintf( buf, "sip:%s@%s", callee, registrar );
+
+    pj_str_t uri = pj_str(buf);
+    pj_status_t status = pjsua_call_make_call(acc_id, &uri, 0, NULL, NULL, NULL);
+    if (status != PJ_SUCCESS) error_exit("Error making call", status);
+
+    // wait for duration
+    time_t endtime = time( NULL ) + duration;
+    while( !g_stop.load() && time( NULL ) < endtime )
+        usleep( 100000 );
+
+    pjsua_call_hangup_all();
 }
 
 /*
@@ -146,7 +172,9 @@ int main(int argc, char *argv[])
     int pos = 1;
     int duration = 5;
     int loglevel = 0;
-    const char *name = nullptr, *registrar, *username, *password, *callee;
+    int daemon_handle = 0;
+    const char *name = nullptr, *registrar, *username, *password, *callee, *daemon_fifo = nullptr;
+
     for( ; pos < argc; pos++ ) {
         if( argv[pos][0] != '-' ) {
             break;
@@ -162,6 +190,8 @@ int main(int argc, char *argv[])
             // must be at the end of the string
             if( argv[pos][loglevel+1] )
                 usage( "unknown option" );
+        } else if( !strcmp( argv[pos], "--daemon" )) {
+            daemon_fifo = argv[++pos];
         } else {
             usage( "unknown option" );
         }
@@ -190,6 +220,20 @@ int main(int argc, char *argv[])
             if( (unsigned char) buf[i] < 32 )
                 buf[i] = 0;
         password = buf;
+    }
+
+    if( daemon_fifo ) {
+        daemon_handle = open( daemon_fifo, O_RDONLY | O_NONBLOCK );
+        if( daemon_handle < 0 ) {
+            fprintf( stderr, "error opening fifo file %s", daemon_fifo );
+            return 1;
+        }
+        int flags = fcntl(daemon_handle, F_GETFL, 0);
+        if( flags == -1 || fcntl(daemon_handle, F_SETFL, flags & ~O_NONBLOCK) == -1 ) {
+            fprintf( stderr, "error setting fifo to blocking" );
+            return 1;
+        }
+
     }
 
     // do some validation
@@ -304,26 +348,22 @@ int main(int argc, char *argv[])
         error_exit( "Error registering at registrar", PJ_EUNKNOWN );
 
     // now make the call
+    if( !daemon_handle ) {
+        ring( acc_id, registrar, callee, duration );
+    } else {
+        char text[50];
+        while( !g_stop.load()) {
+            usleep( 100000 );
 
-    {
-        char buf[512];
+            int n = read( daemon_handle, text, sizeof text );
+            if( n <= 0 )
+                continue;
 
-        if( callee[0] == 's' && callee[1] == 'i' && callee[2] == 'p' && callee[3] == ':' )
-            strcpy( buf, callee );
-        else
-            sprintf( buf, "sip:%s@%s", callee, registrar );
 
-        pj_str_t uri = pj_str(buf);
-        status = pjsua_call_make_call(acc_id, &uri, 0, NULL, NULL, NULL);
-        if (status != PJ_SUCCESS) error_exit("Error making call", status);
+            ring( acc_id, registrar, callee, duration );
+        }
     }
 
-    // wait for duration
-    time_t endtime = time( NULL ) + duration;
-    while( !g_stop.load() && time( NULL ) < endtime )
-        usleep( 100000 );
-
-    pjsua_call_hangup_all();
 
     /* Destroy pjsua */
     pjsua_destroy();
