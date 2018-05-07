@@ -34,6 +34,12 @@
 std::atomic<int> g_registerState( 0 );          // 0: not registered yet, -1 registration failed, 1 registration ok
 std::atomic<bool> g_stop( false );              // true: signal (HUP, INT, ...) received
 
+pjsua_acc_config g_acc_cfg;
+char g_acc_cfg_id[500];                         // the buffer behind the g_acc_cfg.id field
+char g_username[101];
+char g_registrar[101];
+char g_callee[250];                             // must be at least 100 (max length of callee on cmdline) + max length of registrar + some chars
+
 /* Callback called by the library upon receiving incoming call */
 static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
 			     pjsip_rx_data *rdata)
@@ -120,36 +126,54 @@ static void usage( const char* text = nullptr )
                      "registrar:     The IP address or host name of the SIP registrar\n"
                      "username:      User name for login at the registrar\n"
                      "password:      Password for the login\n"
-                     "               If this starts with '/', the password will be read from that file\n"
+                     "               If this starts with '/', the password will be read from that file.\n"
+                     "               This is the recommended way, because then, the password won't be visible in the task list.\n"
                      "callee:        Phone number or sip URI to call\n\n"
                      "Options:\n"
                      "--duration n:  Ring for n seconds (default: 5)\n"
                      "--name str:    Use str as caller name\n"
-                     "--daemon:      Daemonize, in order to actually ring, send SIGUSR1\n"
-                     "               e.g. with \"killall -SIGUSR1 ringsip\""
+                     "--daemon fifo: Daemonize, in order to actually ring, send a string to the FIFO file.\n"
+                     "               If you just send newline, it will not change the name.\n"
+                     "               If you send a text followed by newline, it will change the caller name before ringing.\n"
                      "-v, -vv, -vvv: Little to medium verbosity\n"
                      "-vvvv:         Also show SIP messages\n"
                      "-vvvvv, ...:   Be very verbose\n\n"
                      "Examples:\n"
                      "ringsip --name \"Hello world\" fritz.box 620 secret '**701'\n"
                      "ringsip --duration 20 192.168.0.1 620 secret 01711234567\n"
-                     "ringsip 192.168.0.1 620 secret sip:pete@host.com\n",
+                     "ringsip 192.168.0.1 620 secret sip:pete@host.com\n"
+                     "mkfifo /run/ringsip.fifo\n"
+                     "ringsip --daemon /run/ringsip.fifo 192.168.0.1 620 /etc/ringsip.password **701\n",
                      text ? "Error: " : "", text ? text : "", text ? "\n\n" : "", GITREV );
     exit( 1 );
 }
 
-
-static void ring( pjsua_acc_id acc_id, const char* registrar, const char* callee, int duration )
+// This will set g_acc_cfg.id to the correct value
+static void setID( const char* name )
 {
-    char buf[512];
+    if( name and name[0] ) {
+        // remove bad chars
+        int dest = 0;
+        g_acc_cfg_id[dest++] = '"';
+        for( int src = 0; name[src]; src++ )
+            if( ( unsigned char ) name[src] >= 32 && name[src] != '"' )
+                g_acc_cfg_id[dest++] = name[src];
 
-    if( callee[0] == 's' && callee[1] == 'i' && callee[2] == 'p' && callee[3] == ':' )
-        strcpy( buf, callee );
-    else
-        sprintf( buf, "sip:%s@%s", callee, registrar );
+        sprintf( g_acc_cfg_id + dest, "\" <sip:%s@%s>", g_username, g_registrar );
+    } else
+        sprintf( g_acc_cfg_id, "sip:%s@%s", g_username, g_registrar );
 
-    pj_str_t uri = pj_str(buf);
-    pj_status_t status = pjsua_call_make_call(acc_id, &uri, 0, NULL, NULL, NULL);
+    g_acc_cfg.id = pj_str( g_acc_cfg_id );
+}
+
+
+static void ring( pjsua_acc_id acc_id, int duration )
+{
+    pj_status_t status;
+
+    pj_str_t pjCallee = pj_str(g_callee);
+
+    status = pjsua_call_make_call(acc_id, &pjCallee, 0, NULL, NULL, NULL);
     if (status != PJ_SUCCESS) error_exit("Error making call", status);
 
     // wait for duration
@@ -223,6 +247,9 @@ int main(int argc, char *argv[])
     }
 
     if( daemon_fifo ) {
+        // We have to open the FIFO non-blocking, because otherwise, open() would block
+        // until there is a process on the other end.
+        // Then, we immediately set the FIFO to blocking.
         daemon_handle = open( daemon_fifo, O_RDONLY | O_NONBLOCK );
         if( daemon_handle < 0 ) {
             fprintf( stderr, "error opening fifo file %s", daemon_fifo );
@@ -239,14 +266,22 @@ int main(int argc, char *argv[])
     // do some validation
     if( name && strlen( name ) > 100 )
         usage( "name too long" );
-    if( strlen( registrar ) > 100 )
+    if( strlen( registrar ) > sizeof( g_registrar ) - 1 )
         usage( "registrar too long" );
-    if( strlen( username ) > 50 )
+    if( strlen( username ) > sizeof( g_username ) - 1 )
         usage( "username too long" );
     if( strlen( password ) > 50 )
         usage( "password too long" );
     if( strlen( callee ) > 100 )
         usage( "callee too long" );
+
+    strcpy( g_username, username );
+    strcpy( g_registrar, registrar );
+
+    if( callee[0] == 's' && callee[1] == 'i' && callee[2] == 'p' && callee[3] == ':' )
+        strcpy( g_callee, callee );
+    else
+        sprintf( g_callee, "sip:%s@%s", callee, registrar );
 
     pjsua_acc_id acc_id;
     pj_status_t status;
@@ -282,11 +317,11 @@ int main(int argc, char *argv[])
 
     /* Add UDP transport. */
     {
-	pjsua_transport_config cfg;
+	pjsua_transport_config t_cfg;
 
-	pjsua_transport_config_default(&cfg);
-	cfg.port = 5060;
-	status = pjsua_transport_create(PJSIP_TRANSPORT_UDP, &cfg, NULL);
+	pjsua_transport_config_default(&t_cfg);
+	t_cfg.port = 5060;
+	status = pjsua_transport_create(PJSIP_TRANSPORT_UDP, &t_cfg, NULL);
 	if (status != PJ_SUCCESS) error_exit("Error creating transport", status);
     }
 
@@ -298,43 +333,27 @@ int main(int argc, char *argv[])
     signal( SIGINT, signalHandler );
     signal( SIGTERM, signalHandler );
 
-    /* Register to SIP server by creating SIP account. */
-    {
-	pjsua_acc_config cfg;
+    pjsua_acc_config_default(&g_acc_cfg);
 
-	pjsua_acc_config_default(&cfg);
+    char reg_uri[512];
+    setID( name );
 
-        char id[512], reg_uri[512];
+    sprintf( reg_uri, "sip:%s", registrar );
 
-        if( name and name[0] ) {
-            // remove bad chars
-            int dest = 0;
-            id[dest++] = '"';
-            for( int src = 0; name[src]; src++ )
-                if( ( unsigned char ) name[src] >= 32 && name[src] != '"' )
-                    id[dest++] = name[src];
+    // the const casts are ok here. They are because of the dreaded pj_str,
+    // that needs non-const pointers. However, pjsua_acc_add will copy them and never change them.
+    // (It's also done implicitly in the simple_pjsua.c example that way.)
 
-            sprintf( id + dest, "\" <sip:%s@%s>", username, registrar );
-        } else
-            sprintf( id, "sip:%s@%s", username, registrar );
+    g_acc_cfg.reg_uri = pj_str( reg_uri );
+    g_acc_cfg.cred_count = 1;
+    g_acc_cfg.cred_info[0].realm = pj_str(const_cast<char*>( "*" ));
+    g_acc_cfg.cred_info[0].scheme = pj_str(const_cast<char*>( "digest" ));
+    g_acc_cfg.cred_info[0].username = pj_str( g_username );
+    g_acc_cfg.cred_info[0].data_type = PJSIP_CRED_DATA_PLAIN_PASSWD;
+    g_acc_cfg.cred_info[0].data = pj_str(const_cast<char*>( password ));
 
-        sprintf( reg_uri, "sip:%s", registrar );
-
-        // the const casts are ok here. They are because of the dreaded pj_str,
-        // that needs non-const pointers. However, pjsua_acc_add will copy them and never change them.
-
-	cfg.id = pj_str( id );
-	cfg.reg_uri = pj_str( reg_uri );
-	cfg.cred_count = 1;
-	cfg.cred_info[0].realm = pj_str(const_cast<char*>( "*" ));
-	cfg.cred_info[0].scheme = pj_str(const_cast<char*>( "digest" ));
-	cfg.cred_info[0].username = pj_str(const_cast<char*>( username ));
-	cfg.cred_info[0].data_type = PJSIP_CRED_DATA_PLAIN_PASSWD;
-	cfg.cred_info[0].data = pj_str(const_cast<char*>( password ));
-
-	status = pjsua_acc_add(&cfg, PJ_TRUE, &acc_id);
-	if (status != PJ_SUCCESS) error_exit("Error adding account", status);
-    }
+    status = pjsua_acc_add(&g_acc_cfg, PJ_TRUE, &acc_id);
+    if (status != PJ_SUCCESS) error_exit("Error adding account", status);
 
     /* wait until registered */
 
@@ -349,18 +368,36 @@ int main(int argc, char *argv[])
 
     // now make the call
     if( !daemon_handle ) {
-        ring( acc_id, registrar, callee, duration );
+        ring( acc_id, duration );
     } else {
-        char text[50];
+        char text[100];
+        int pos = 0;
         while( !g_stop.load()) {
             usleep( 100000 );
 
-            int n = read( daemon_handle, text, sizeof text );
+            int n = read( daemon_handle, text + pos, sizeof text - pos - 1 );
             if( n <= 0 )
                 continue;
 
+            pos += n;
+            text[pos] = 0;
+            // Is there a newline? (Should almost always be the case)
+            char* nl = strchr( text, '\n' );
+            if( !nl ) {
+                // ok, someone sends characters individually
+                if( pos >= (int) sizeof text - 1 )
+                    pos = 0;                    // Someone sends large text. Ignore it
+                continue;         
+            }
 
-            ring( acc_id, registrar, callee, duration );
+            *nl = 0;            // discard everything after the newline. (There should not be anything anyway... Except someone sends multiple lines which is not very useful)
+
+            setID( text );
+            status = pjsua_acc_modify(acc_id, &g_acc_cfg);
+            if (status != PJ_SUCCESS) error_exit("Error modifying account", status);
+
+            ring( acc_id, duration );
+            pos = 0;
         }
     }
 
