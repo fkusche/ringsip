@@ -30,15 +30,16 @@
 
 #define THIS_FILE	"APP"
 #define MAX_PASSWORD    50
+#define MAX_NAME        100
 
 std::atomic<int> g_registerState( 0 );          // 0: not registered yet, -1 registration failed, 1 registration ok
 std::atomic<bool> g_stop( false );              // true: signal (HUP, INT, ...) received
 
 pjsua_acc_config g_acc_cfg;
-char g_acc_cfg_id[500];                         // the buffer behind the g_acc_cfg.id field
-char g_username[101];
-char g_registrar[101];
-char g_callee[250];                             // must be at least 100 (max length of callee on cmdline) + max length of registrar + some chars
+char g_acc_cfg_id[MAX_NAME * 3 + 100];          // the buffer behind the g_acc_cfg.id field - must be able to store the display name, username, registrar and some additional chars
+char g_username[MAX_NAME + 1];
+char g_registrar[MAX_NAME + 1];
+char g_callee[MAX_NAME * 2 + 100];              // must be at least max length of callee + max length of registrar + some chars
 
 /* Callback called by the library upon receiving incoming call */
 static void on_incoming_call(pjsua_acc_id acc_id, pjsua_call_id call_id,
@@ -263,15 +264,15 @@ int main(int argc, char *argv[])
     }
 
     // do some validation
-    if( name && strlen( name ) > 100 )
+    if( name && strlen( name ) > MAX_NAME )
         usage( "name too long" );
-    if( strlen( registrar ) > sizeof( g_registrar ) - 1 )
+    if( strlen( registrar ) > MAX_NAME )
         usage( "registrar too long" );
-    if( strlen( username ) > sizeof( g_username ) - 1 )
+    if( strlen( username ) > MAX_NAME )
         usage( "username too long" );
     if( strlen( password ) > MAX_PASSWORD )
         usage( "password too long" );
-    if( strlen( callee ) > 100 )
+    if( strlen( callee ) > MAX_NAME )
         usage( "callee too long" );
 
     strcpy( g_username, username );
@@ -369,7 +370,7 @@ int main(int argc, char *argv[])
     if( !daemon_handle ) {
         ring( acc_id, duration );
     } else {
-        char text[100];
+        char text[MAX_NAME+1];
         int pos = 0;
         while( !g_stop.load()) {
             usleep( 100000 );
