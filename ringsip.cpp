@@ -1,5 +1,5 @@
 /* ringsip.cpp
- * Copyright (C) 2017 Florian Kusche <git@kusche.de>
+ * Copyright (C) 2017 Florian Kusche <ringsip@kusche.de>
  *
  * based on simple_pjsua which is
  * Copyright (C) 2008-2011 Teluu Inc. (http://www.teluu.com)
@@ -260,7 +260,6 @@ int main(int argc, char *argv[])
             fprintf( stderr, "error setting fifo to blocking" );
             return 1;
         }
-
     }
 
     // do some validation
@@ -270,7 +269,7 @@ int main(int argc, char *argv[])
         usage( "registrar too long" );
     if( strlen( username ) > sizeof( g_username ) - 1 )
         usage( "username too long" );
-    if( strlen( password ) > 50 )
+    if( strlen( password ) > MAX_PASSWORD )
         usage( "password too long" );
     if( strlen( callee ) > 100 )
         usage( "callee too long" );
