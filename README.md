@@ -1,4 +1,13 @@
+# Attention regarding Debian Buster
+
+The PJSIP-libraries are not part of Debian 10 anymore and I did not want to compile them myself.
+
+I now use a Python script, because nowadays, it is well documented how to control a FritzBox via TR-064.
+
+Have a look at https://gist.github.com/fkusche/9fb495dd67c047d6b5a7e2241833e95b
+
 # ringsip
+
 Rings a phone via SIP (e.g. FRITZ!Box)
 
     This program registers with a SIP registrar, makes a call and then hangs up
@@ -62,3 +71,9 @@ Type=simple
 WantedBy=multi-user.target
 ```
 
+## Alternatives
+
+There are also alternatives:
+- https://ct.de/ytg8 - ESP8266 board which rings via Wifi and TR-064
+- https://www.mikrocontroller.net/topic/442157 (Arduino and SIP INVITE - but I did not have a closer look, yet)
+- https://www.mikrocontroller.net/topic/444994 (dito)
